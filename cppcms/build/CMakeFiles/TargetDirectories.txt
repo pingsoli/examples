@@ -1,3 +1,0 @@
-/home/pingsoli/workspace/open_source/cppcms/build/CMakeFiles/edit_cache.dir
-/home/pingsoli/workspace/open_source/cppcms/build/CMakeFiles/rebuild_cache.dir
-/home/pingsoli/workspace/open_source/cppcms/build/CMakeFiles/json_test.dir
