@@ -1,4 +1,4 @@
-# Ignore compile middleware
+# Ignore compile middleware file
 *.o
 *.swp
 *.out
