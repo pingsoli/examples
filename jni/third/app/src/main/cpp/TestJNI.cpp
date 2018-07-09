@@ -5,34 +5,37 @@
 
 #include "TestJNI.h"
 
+JavaVM *jvm;
+jclass jni_cls;
+jclass inner_cls;
+
 // create a instance, and manipulate the member variable value
 JNIEXPORT jobject JNICALL nativeCreateInnerClassInstance
   (JNIEnv *env, jclass cls, jstring msg, jint count) {
-  jclass inner_class = env->FindClass("TestJNI$InnerClass");
-  jmethodID constructor = env->GetMethodID(inner_class, "<init>", "()V");
+  jmethodID constructor = env->GetMethodID(inner_cls, "<init>", "()V");
 
   // create a new instance
-  jobject obj = env->NewObject(inner_class, constructor);
+  jobject obj = env->NewObject(inner_cls, constructor);
 
-  // manipulate the inner class member variable.
-  jfieldID count_fid = env->GetFieldID(inner_class, "count", "I");
+  // manipulate the inner class member variable
+  jfieldID count_fid = env->GetFieldID(inner_cls, "count", "I");
   env->SetIntField(obj, count_fid, count);
 
-  jfieldID message_fid = env->GetFieldID(inner_class, "message", "Ljava/lang/String;");
+  jfieldID message_fid = env->GetFieldID(inner_cls, "message", "Ljava/lang/String;");
   env->SetObjectField(obj, message_fid, msg);
 
+  // return a local reference, and connect to java instance, the resource recollected by java part.
   return obj;
 }
 
 // get the member variable from JNI
 JNIEXPORT void JNICALL nativePrintInnerClassInstance
   (JNIEnv *env, jclass cls, jobject obj) {
-  jclass inner_class = env->FindClass("TestJNI$InnerClass");
 
-  jfieldID count_fid = env->GetFieldID(inner_class, "count", "I");
+  jfieldID count_fid = env->GetFieldID(inner_cls, "count", "I");
   jint count = env->GetIntField(obj, count_fid);
 
-  jfieldID msg_fid = env->GetFieldID(inner_class, "message", "Ljava/lang/String;");
+  jfieldID msg_fid = env->GetFieldID(inner_cls, "message", "Ljava/lang/String;");
   jstring message = (jstring) env->GetObjectField(obj, msg_fid);
 
   for (int i = 0; i < count; ++i) {
@@ -40,7 +43,6 @@ JNIEXPORT void JNICALL nativePrintInnerClassInstance
   }
 }
 
-JavaVM *jvm;
 jobject g_obj; // you need create a global variable when passing a jobject argument
 
 // one process only have one jvm.
@@ -50,10 +52,9 @@ void attach() {
   using namespace std::literals::chrono_literals; // c++14, for `1s` syntax.
   JNIEnv* env;
 
-  jvm->AttachCurrentThread((void **)&env, NULL);
+  jvm->AttachCurrentThread(&env, NULL);
   // jobject global_obj = env->NewGlobalRef(obj);
-  jclass inner_class = env->FindClass("TestJNI$InnerClass");
-  jmethodID print_mid = env->GetMethodID(inner_class, "print", "()V");
+  jmethodID print_mid = env->GetMethodID(inner_cls, "print", "()V");
 
   for (int i = 0; i < 1; ++i) {
     std::cout << "\ncall the print() method" << '\n';
@@ -91,13 +92,11 @@ JNIEXPORT void JNICALL nativePrintInnerClassInstanceByCallingJavaMethod
   t.detach();
 }
 
-jclass g_cls; // load it when JNI_OnLoad method called, reuse it later
-
 void staticPrint() {
   using namespace std::literals::chrono_literals;
   JNIEnv *env;
 
-  jvm->AttachCurrentThread((void **)&env, NULL);
+  jvm->AttachCurrentThread(&env, NULL);
 
   // NOTE: the following code may not work in android device, and get the error,
   // TestJNI$InnerClass couldn't be found. so we must find the class in JNI part.
@@ -105,10 +104,10 @@ void staticPrint() {
   // jmethodID static_mid = env->GetStaticMethodID(inner_class, "staticPrint", "()V");
 
   // Use the global class, we set it when loading.
-  jmethodID static_mid = env->GetStaticMethodID(g_cls, "staticPrint", "()V");
+  jmethodID static_mid = env->GetStaticMethodID(inner_cls, "staticPrint", "()V");
 
-  while (true) {
-    env->CallStaticVoidMethod(g_cls, static_mid/*, no arguments*/);
+  for (int i = 0; i < 10; ++i){
+    env->CallStaticVoidMethod(inner_cls, static_mid/*, no arguments*/);
     std::this_thread::sleep_for(1s);
   }
 
@@ -119,30 +118,41 @@ JNIEXPORT void JNICALL nativeCallInnerClassStaticPrintMethodNativeThread
   (JNIEnv *env, jclass cls) {
   env->GetJavaVM(&jvm);
   std::thread t(&staticPrint);
-  t.join();
+  t.detach();
+}
+
+JNIEXPORT void JNICALL memoryLeakByUnreleaseLocalRef(JNIEnv *env, jclass cls) {
+  for (long i = 0; i < 1000; ++i) {
+    jstring str = env->NewStringUTF("Hello world!");
+
+    // do something important.
+
+    // what if we don't release the resource, the heap will overflow.
+    env->DeleteLocalRef(str); // now, it works fine.
+  }
 }
 
 void registerNative(JNIEnv *env) {
-  const char* TestJNIClassPathName = "TestJNI";
+  const char* TestJNIClassPathName = "com/pingsoli/testjni/TestJNI";
 
   JNINativeMethod TestJNINativeMethods[] = {
     {
       (char*)"nativeCreateInnerClassInstance",
-      (char*)"(Ljava/lang/String;I)LTestJNI$InnerClass;",
+      (char*)"(Ljava/lang/String;I)Lcom/pingsoli/testjni/TestJNI$InnerClass;",
       reinterpret_cast<void*>(
           static_cast<jobject (*)(JNIEnv*, jclass, jstring, jint)>
           (&nativeCreateInnerClassInstance))
     },
     {
       (char*)"nativePrintInnerClassInstance",
-      (char*)"(LTestJNI$InnerClass;)V",
+      (char*)"(Lcom/pingsoli/testjni/TestJNI$InnerClass;)V",
       reinterpret_cast<void*>(
           static_cast<void (*)(JNIEnv*, jclass, jobject)>
           (&nativePrintInnerClassInstance))
     },
     {
       (char*)"nativePrintInnerClassInstanceByCallingJavaMethod",
-      (char*)"(LTestJNI$InnerClass;)V",
+      (char*)"(Lcom/pingsoli/testjni/TestJNI$InnerClass;)V",
       reinterpret_cast<void*>(
           static_cast<void (*)(JNIEnv*, jclass, jobject)>
           (&nativePrintInnerClassInstanceByCallingJavaMethod))
@@ -154,14 +164,22 @@ void registerNative(JNIEnv *env) {
           static_cast<void (*)(JNIEnv*, jclass)>
           (&nativeCallInnerClassStaticPrintMethodNativeThread))
     },
+    {
+      (char *)"memoryLeakByUnreleaseLocalRef",
+      (char *)"()V",
+      reinterpret_cast<void*>(
+          static_cast<void (*)(JNIEnv*, jclass)>
+          (&memoryLeakByUnreleaseLocalRef))
+    }
   };
 
-  jclass cls = env->FindClass(TestJNIClassPathName);
-  env->RegisterNatives(cls, TestJNINativeMethods,
-      sizeof(TestJNINativeMethods) / sizeof(TestJNINativeMethods[0]));
+  jclass local_cls = env->FindClass(TestJNIClassPathName);
+  jni_cls = reinterpret_cast<jclass>(env->NewGlobalRef(local_cls));
+  env->RegisterNatives(jni_cls, TestJNINativeMethods, sizeof(TestJNINativeMethods) / sizeof(TestJNINativeMethods[0]));
 
   // Find the class when loading, and reuse it later.
-  g_cls = env->FindClass("TestJNI$InnerClass");
+  jclass local_inner_cls = env->FindClass("com/pingsoli/testjni/TestJNI$InnerClass");
+  inner_cls = reinterpret_cast<jclass>(env->NewGlobalRef(local_inner_cls));
 }
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *jvm, void *reserved) {
